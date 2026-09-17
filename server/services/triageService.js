@@ -95,20 +95,6 @@ function sanitizeJsonString(value) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function logOpenRouterStage(stage, details) {
-  const safeDetails = { ...details }
-
-  if (typeof safeDetails.content === 'string') {
-    safeDetails.content = safeDetails.content.slice(0, 500)
-  }
-
-  if (safeDetails.errorBody && typeof safeDetails.errorBody === 'string') {
-    safeDetails.errorBody = safeDetails.errorBody.slice(0, 500)
-  }
-
-  console.log(`[OPENROUTER] ${stage}`, JSON.stringify(safeDetails))
-}
-
 function extractMessageContent(payload) {
   const message = payload?.choices?.[0]?.message
 
@@ -170,7 +156,6 @@ function resolveOpenRouterModel(requestedModel) {
   }
 
   if (value.toLowerCase().includes('openrouter/free')) {
-    console.warn('[OPENROUTER] Unsupported strict-JSON model detected. Falling back to openai/gpt-4o-mini.')
     return DEFAULT_OPENROUTER_MODEL
   }
 
@@ -369,9 +354,6 @@ async function analyzeTicket(ticket) {
   const apiKey = process.env.OPENROUTER_API_KEY
   const model = resolveOpenRouterModel(process.env.OPENROUTER_MODEL)
 
-  console.log('[OPENROUTER] OPENROUTER_API_KEY loaded:', Boolean(apiKey))
-  console.log('[OPENROUTER] OPENROUTER_MODEL:', model)
-
   if (!apiKey) {
     throw new Error('OPENROUTER_REQUEST_FAILED: OpenRouter API key is not configured.')
   }
@@ -448,17 +430,10 @@ async function analyzeTicket(ticket) {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
-        'HTTP-Referer': 'http://localhost:5173',
         'X-Title': 'ai-it-support-triage',
       },
       body: JSON.stringify(requestBody),
       signal: controller.signal,
-    })
-
-    logOpenRouterStage('REQUEST_SENT', {
-      status: response.status,
-      contentType: response.headers.get('content-type'),
-      model,
     })
 
     if (!response.ok) {
@@ -479,17 +454,7 @@ async function analyzeTicket(ticket) {
     }
 
     const payload = await response.json()
-    const message = payload?.choices?.[0]?.message
     const content = extractMessageContent(payload)
-
-    logOpenRouterStage('RESPONSE_RECEIVED', {
-      topLevelKeys: Object.keys(payload || {}),
-      choicesLength: Array.isArray(payload?.choices) ? payload.choices.length : 0,
-      messageExists: Boolean(message),
-      contentType: typeof content,
-      contentEmpty: typeof content !== 'string' || !content.trim(),
-      rawContentPreview: typeof content === 'string' ? content.slice(0, 400) : null,
-    })
 
     if (!content) {
       throw new Error('OPENROUTER_RESPONSE_EMPTY: model returned no assistant content')
@@ -497,34 +462,25 @@ async function analyzeTicket(ticket) {
 
     try {
       const parsed = parseJsonContent(content)
-      logOpenRouterStage('PARSED_SUCCESS', { parsedKeys: Object.keys(parsed || {}) })
       return validateTriageResult(parsed)
     } catch (parseError) {
-      logOpenRouterStage('OPENROUTER_RESPONSE_PARSE_FAILED', {
-        message: parseError && parseError.message ? parseError.message : 'Unknown parse error',
-        contentPreview: content.slice(0, 500),
-      })
       throw new Error(`OPENROUTER_RESPONSE_PARSE_FAILED: ${parseError && parseError.message ? parseError.message : 'Unknown parse error'}`)
     }
   } catch (error) {
     if (error && error.name === 'AbortError') {
       const timeoutError = new Error('OPENROUTER_REQUEST_FAILED: The triage request timed out.')
-      console.log('[OPENROUTER] OPENROUTER_REQUEST_FAILED', timeoutError.message)
       throw timeoutError
     }
 
     if (error instanceof Error && error.message && error.message.startsWith('OPENROUTER_')) {
-      console.log('[OPENROUTER] DIAGNOSTIC_STAGE_FAILED', error.message)
       throw error
     }
 
     if (error instanceof Error && error.message) {
       const message = error.message
-      console.log('[OPENROUTER] GENERIC_FAILURE', message)
       throw new Error(`OPENROUTER_REQUEST_FAILED: ${message}`)
     }
 
-    console.log('[OPENROUTER] GENERIC_FAILURE', 'Unknown error')
     throw new Error('OPENROUTER_REQUEST_FAILED: Unknown error')
   } finally {
     clearTimeout(timeout)
