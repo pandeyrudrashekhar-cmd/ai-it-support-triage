@@ -5,7 +5,19 @@ const cors = require('cors')
 const triageRoutes = require('./routes/triageRoutes')
 
 const app = express()
-const allowedOrigins = ['http://localhost:5173', 'http://localhost:5174']
+const localOrigins = ['http://localhost:5173', 'http://localhost:5174']
+const configuredClientOrigin = (() => {
+  if (!process.env.CLIENT_URL) {
+    return null
+  }
+
+  try {
+    return new URL(process.env.CLIENT_URL).origin
+  } catch (error) {
+    return process.env.CLIENT_URL.replace(/\/$/, '')
+  }
+})()
+const allowedOrigins = [...new Set([...localOrigins, ...(configuredClientOrigin ? [configuredClientOrigin] : [])])]
 
 app.use(cors({
   origin: (origin, callback) => {
